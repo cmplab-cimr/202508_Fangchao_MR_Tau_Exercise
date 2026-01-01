@@ -84,7 +84,8 @@ class FigurePlotting(object):
             self, figure_output_direct, figure_name,
             complete_data_dict, target_emu_name_nested_list, target_row_num, target_col_num,
             error_bar_data_dict=None, color_dict=None, title_dict=None,
-            y_lim=(0, 1), y_label=None, x_label_list=None, figure_size=None, legend=False, legend_color_dict=None):
+            y_lim=(0, 1), y_label=None, x_label_list=None, figure_size=None, legend=False, legend_color_dict=None,
+            supplementary_text_list=None, supplementary_text_loc_list=None, **kwargs):
         ParameterName = self.ParameterName
         if title_dict is None:
             title_dict = TransformDict()
@@ -92,6 +93,11 @@ class FigurePlotting(object):
             low_height = True
         else:
             low_height = False
+        if supplementary_text_loc_list is not None:
+            supplementary_text_loc_vector_list = [
+                Vector(*text_loc) for text_loc in supplementary_text_loc_list]
+        else:
+            supplementary_text_loc_vector_list = None
 
         mid_comparison_grid_figure_parameter_dict = {
             ParameterName.figure_data: (complete_data_dict, error_bar_data_dict),
@@ -103,12 +109,19 @@ class FigurePlotting(object):
             ParameterName.mid_name_list: target_emu_name_nested_list,
             ParameterName.x_tick_labels_list: x_label_list,
             ParameterName.subplot_name_dict: title_dict,
+            ParameterName.supplementary_text_list: supplementary_text_list,
+            ParameterName.supplementary_text_loc_list: supplementary_text_loc_vector_list,
 
             ParameterName.x_tick_label_format_dict: {
                 ParameterName.font_size: 5,
             },
             ParameterName.subplot_name_text_format_dict: {
                 ParameterName.font_size: 8,
+            },
+            ParameterName.supplementary_text_format_dict: {
+                ParameterName.font_size: 5,
+                ParameterName.width: 0.5,
+                ParameterName.height: 0.5,
             }
         }
         if y_label is not None:

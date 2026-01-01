@@ -218,9 +218,18 @@ def emu_dependency_analyzer(metabolite_reaction_dict, input_metabolite_name_set,
                         complete_emu_name_obj_index_dict[convolution_emu_full_name] = (
                             convolution_emu_obj, len(complete_emu_name_obj_index_dict))
                     if convolution_emu_full_name not in emu_name_dependency_dict:
-                        emu_name_dependency_dict[convolution_emu_full_name] = {
-                            convoluted_emu_name: [(CoreConstants.convolution_id, 1)]
-                            for convoluted_emu_name in sorted_dependent_emu_name_list}
+                        # emu_name_dependency_dict[convolution_emu_full_name] = {
+                        #     convoluted_emu_name: [(CoreConstants.convolution_id, 1)]
+                        #     for convoluted_emu_name in sorted_dependent_emu_name_list}
+                        current_emu_dependency_dict = {}
+                        for convoluted_emu_name in sorted_dependent_emu_name_list:
+                            if convoluted_emu_name not in current_emu_dependency_dict:
+                                existing_num = 0
+                            else:
+                                existing_num = current_emu_dependency_dict[convoluted_emu_name][0][1]
+                            current_emu_dependency_dict[convoluted_emu_name] = [
+                                (CoreConstants.convolution_id, existing_num + 1)]
+                        emu_name_dependency_dict[convolution_emu_full_name] = current_emu_dependency_dict
                     dependent_emu_name = convolution_emu_full_name
                 else:
                     the_only_dependent_emu = dependent_emu_list[0]

@@ -14,18 +14,8 @@ from scripts.src.core.data.data_class import average_multiple_mfa_data
 
 from ..inventory import MFARunningMode
 
-from .fruitfly_compart_model_20250731 import UserDefinedMFASettings as OldUserDefinedMFASettings
+from scripts.src.mfa_analysis.mfa_config_generator import MFASettings
 
-class UserDefinedMFASettings(OldUserDefinedMFASettings):
-    average_data = True
-
-    loss_percentile = 0.005
-    optimization_num_for_each_suffix_dict = {
-        None: 10000,
-    }
-    average_optimized_results = 50
-
-user_defined_mfa_settings = UserDefinedMFASettings()
 average_str = 'average'
 
 data_name = DataSource.data_Fangchao_fruitfly_20250815
@@ -84,6 +74,24 @@ def return_data_content(running_mode, average=False, no_sucrose_2=True, sucrose_
             *other_parameter)
         return new_data_content
 
+
+class UserDefinedMFASettings(MFASettings):
+    average_data = True
+
+    loss_percentile = 0.005
+    user_defined_constant_flux_dict = {
+        'GLC_total_input': ((keyword.whole_body, keyword.gut), 100),
+    }
+    user_defined_specific_flux_range_dict = {
+        **MFASettings.user_defined_specific_flux_range_dict,
+        'Salvage_c': (None, (1, 10)),
+    }
+    optimization_num_for_each_suffix_dict = {
+        None: 10000,
+    }
+    average_optimized_results = 50
+
+user_defined_mfa_settings = UserDefinedMFASettings()
 
 def result_process_information_dict_analysis(complete_result_information_dict, target=Keywords.mid_prediction):
     from scripts.figures.common.config import ColorConfig

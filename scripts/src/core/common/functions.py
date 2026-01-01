@@ -1,4 +1,4 @@
-from .packages import np, scipy_comb
+from .packages import np, mp, scipy_comb, tqdm
 from .config import CoreConstants
 
 
@@ -169,6 +169,34 @@ def biomass_reaction_dict_constructor(biomass_metabolite_name_list):
     return biomass_reaction_dict_list
 
 
+def exchange_reaction_constructor(
+        metabolite_carbon_num_list, original_compartment, target_compartment,
+        reaction_specific_suffix=None, reversible=True):
+    underline_original_compartment = f'_{original_compartment}'
+    underline_target_compartment = f'_{target_compartment}'
+    exchange_reaction_dict_list = []
+    new_metabolite_name_list = []
+    ord_a = ord('a')
+    for (metabolite_name, carbon_num) in metabolite_carbon_num_list:
+        assert metabolite_name.endswith(underline_original_compartment)
+        bare_metabolite_name = metabolite_name[:-len(underline_original_compartment)]
+        reaction_id = f'EXCHANGE_{bare_metabolite_name}_{original_compartment}_{target_compartment}'
+        if reaction_specific_suffix is not None:
+            reaction_id = f'{reaction_id}_{reaction_specific_suffix}'
+        carbon_mapping_str = ''.join([chr(ord_a + i) for i in range(carbon_num)])
+        new_metabolite_name = f'{bare_metabolite_name}{underline_target_compartment}'
+        new_reaction_dict = {
+            'id': reaction_id,
+            'sub': [(metabolite_name, carbon_mapping_str,),],
+            'pro': [(new_metabolite_name, carbon_mapping_str,)],
+        }
+        if reversible:
+            new_reaction_dict['reverse'] = True
+        exchange_reaction_dict_list.append(new_reaction_dict)
+        new_metabolite_name_list.append(new_metabolite_name)
+    return exchange_reaction_dict_list, new_metabolite_name_list
+
+
 def mid_name_process(raw_mid_name):
     emu_sep = CoreConstants.emu_carbon_list_str_sep
     modified_str_list = []
@@ -187,3 +215,88 @@ def mid_name_process(raw_mid_name):
     return modified_str
 
 
+def tissue_name_breakdown(raw_name):
+    tissue_sep = CoreConstants.specific_tissue_sep
+    if tissue_sep not in raw_name:
+        return None, raw_name
+    plus = '+'
+    prefix = None
+    search_start = 0
+    main_body_list = []
+    while True:
+        sep_location = raw_name.find(tissue_sep, search_start)
+        if sep_location == -1:
+            break
+        else:
+            this_prefix = raw_name[search_start:sep_location]
+            if prefix is None:
+                prefix = this_prefix
+            else:
+                assert this_prefix == prefix
+            body_start = sep_location + len(tissue_sep)
+            next_plus_location = raw_name.find(plus, sep_location)
+            if next_plus_location == -1:
+                main_body_list.append(raw_name[body_start:])
+                break
+            else:
+                next_search_start = next_plus_location + 1
+                main_body_list.append(raw_name[body_start:next_search_start])
+                search_start = next_search_start
+    main_body = ''.join(main_body_list)
+    return prefix, main_body
+
+
+def split_total_num_to_process(total_num, processes_num):
+    common_size = total_num // processes_num
+    rest_size = total_num % processes_num
+    each_process_num_list = (
+            [common_size + 1] * rest_size +
+            [common_size] * (processes_num - rest_size))
+    return each_process_num_list
+
+
+def tqdm_daemon_process_func(receive_pipe, total_num, display_title=None):
+    pbar = tqdm.tqdm(
+        total=total_num, smoothing=0, maxinterval=5,
+        desc=display_title)
+    while True:
+        update_num = receive_pipe.recv()
+        if update_num < 0:
+            break
+        pbar.update(update_num)
+
+
+class ProgressBarExtraProcess(object):
+    def __init__(self, display_progress_bar=False, target_size=0, display_title='', manual_start=False):
+        self.display_progress_bar = display_progress_bar
+        self.target_size = target_size
+        self.display_title = display_title
+        self.receive_pipe = None
+        self.send_pipe = None
+        self.new_daemon_process = None
+        self.manual_start = manual_start
+        self.started = False
+        if self.display_progress_bar:
+            (self.receive_pipe, self.send_pipe) = mp.Pipe()
+
+    def __enter__(self):
+        if self.display_progress_bar:
+            self.new_daemon_process = mp.Process(
+                target=tqdm_daemon_process_func, args=(self.receive_pipe, self.target_size, self.display_title))
+            if not self.manual_start:
+                self.started = True
+                self.new_daemon_process.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.display_progress_bar:
+            self.send_pipe.send(-1)
+            if self.started:
+                self.new_daemon_process.join()
+            self.new_daemon_process.close()
+
+    def start(self):
+        if self.display_progress_bar and self.manual_start:
+            self.started = True
+            self.new_daemon_process.start()
+            self.send_pipe.send(0)

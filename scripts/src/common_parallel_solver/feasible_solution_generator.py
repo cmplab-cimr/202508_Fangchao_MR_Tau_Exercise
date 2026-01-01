@@ -1,14 +1,70 @@
 from .packages import np, mp
-from .config import OptGpSampler
+from .config import OptGpSampler, split_total_num_to_process
 
 
-def universal_feasible_solution_generator(solver_obj, target_size):
-    if target_size < 500:
-        return simple_feasible_solution_generator(solver_obj, target_size)
-    elif target_size < 10000:
-        return complicated_feasible_solution_generator(solver_obj, target_size)
+def universal_feasible_solution_generator(solver_obj, target_size, processes_num=6, display_progress_bar=False):
+    if target_size < 10000:
+        # return simple_feasible_solution_generator(solver_obj, target_size)
+        return parallel_feasible_solution_generator(
+            solver_obj, target_size, processes_num=processes_num, display_progress_bar=display_progress_bar)
+    # elif target_size < 10000:
+    #     return complicated_feasible_solution_generator(solver_obj, target_size)
     else:
         return complicated_feasible_solution_generator(solver_obj, target_size)
+
+
+def simple_feasible_solution_generator(parameter_list):
+    (base_lp_sampler, target_size) = parameter_list
+    maximal_trial_num = 10 * target_size
+    count = 0
+    initial_vector_list = []
+    while len(initial_vector_list) < target_size:
+        initial_vector = base_lp_sampler.sample()
+        if initial_vector is not None:
+            initial_vector_list.append(initial_vector)
+        count += 1
+        if count > maximal_trial_num:
+            # return None
+            break
+    # return np.array(initial_vector_list)
+    return initial_vector_list
+
+
+def parallel_feasible_solution_generator_old(
+        solver_obj, target_size, processes_num=6, parallel_test=False):
+    def parameter_list_generator(test=False):
+        base_lp_sampler = solver_obj.base_lp_sampler
+        each_process_target_size_list = split_total_num_to_process(
+            target_size, processes_num)
+        for each_process_target_size in each_process_target_size_list:
+            yield (base_lp_sampler, each_process_target_size)
+
+    def process_result(raw_result):
+        folded_initial_vector_list.append(raw_result)
+
+    folded_initial_vector_list = []
+    parallel_test |= target_size < 10
+    parameter_list_iter = parameter_list_generator(parallel_test)
+    if parallel_test:
+        for parameter_list in parameter_list_iter:
+            raw_result = simple_feasible_solution_generator(parameter_list)
+            process_result(raw_result)
+    else:
+        with mp.Pool(processes=processes_num) as pool:
+            raw_result_iter = pool.imap(simple_feasible_solution_generator, parameter_list_iter)
+            for raw_result in raw_result_iter:
+                process_result(raw_result)
+    initial_vector_array = np.concatenate(folded_initial_vector_list)
+    return initial_vector_array
+
+
+def parallel_feasible_solution_generator(
+        solver_obj, target_size, processes_num=6, parallel_test=False, display_progress_bar=False):
+    base_lp_sampler = solver_obj.base_lp_sampler
+    final_initial_array = base_lp_sampler.parallel_sample(
+        target_size, processes_num=processes_num, parallel_test=parallel_test,
+        display_progress_bar=display_progress_bar)
+    return final_initial_array
 
 
 def optimized_feasible_solution_generator_sampler(solver_obj, target_size, tf2_sampler_option_dict):
@@ -29,20 +85,6 @@ def optimized_feasible_solution_generator_sa(solver_obj, target_size, tf2_sa_opt
     final_solution, final_obj = tf2_sa_solver.solve(target_size)
     print(final_obj)
     return final_solution
-
-
-def simple_feasible_solution_generator(base_solver_obj, target_size):
-    maximal_trial_num = 10 * target_size
-    count = 0
-    initial_vector_list = []
-    while len(initial_vector_list) < target_size:
-        initial_vector = base_solver_obj.base_lp_sampler.sample()
-        if initial_vector is not None:
-            initial_vector_list.append(initial_vector)
-        count += 1
-        if count > maximal_trial_num:
-            return None
-    return np.array(initial_vector_list)
 
 
 def complicated_feasible_solution_generator(solver_obj, target_size, thinning=30):

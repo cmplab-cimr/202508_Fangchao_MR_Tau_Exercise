@@ -82,11 +82,13 @@ def experimental_data_plotting_func_template(
         mid_data_dict = {}
         raw_data_dict = {}
         std_data_dict = {}
+        mfa_exclusion_dict = {}
         for result_label, experimental_mfa_data_obj in complete_experimental_mfa_data_obj_dict.items():
             if result_label not in mid_data_dict:
                 mid_data_dict[result_label] = {}
                 raw_data_dict[result_label] = {}
                 std_data_dict[result_label] = {}
+                mfa_exclusion_dict[result_label] = {}
             for metabolite_name, mid_data_obj in experimental_mfa_data_obj.experimental_mid_data_obj_dict.items():
                 mid_data_dict[result_label][metabolite_name] = mid_data_obj.data_vector
                 raw_data_dict[result_label][metabolite_name] = mid_data_obj.raw_data_vector
@@ -96,19 +98,21 @@ def experimental_data_plotting_func_template(
                     except KeyError:
                         current_std_vector = None
                     std_data_dict[result_label][metabolite_name] = current_std_vector
-        return mid_data_dict, raw_data_dict, std_data_dict
+                mfa_exclusion_dict[result_label][metabolite_name] = mid_data_obj.excluded_from_mfa
+        return mid_data_dict, raw_data_dict, std_data_dict, mfa_exclusion_dict
 
     def experimental_data_plotting(
             complete_experimental_mfa_data_obj_dict, complete_result_information_dict, output_direct,
             complete_mid_std_data_vector_dict=None,):
         (
-            preprocess_mid_data_dict, preprocess_raw_data_dict, preprocess_std_data_dict
+            preprocess_mid_data_dict, preprocess_raw_data_dict, preprocess_std_data_dict, preprocess_mfa_exclusion_dict
         ) = preprocess_all_result_label_data(
             complete_experimental_mfa_data_obj_dict, complete_mid_std_data_vector_dict)
         tmp_mid_data_dict = {}
         tmp_raw_data_dict = {}
         tmp_std_data_dict = {}
         tmp_color_dict = {}
+        tmp_mfa_excluded_dict = {}
         for (
                 result_label, major_key, minor_key_list, minor_key_str, current_color, order_index
         ) in major_minor_key_analysis_func(complete_result_information_dict):
@@ -120,18 +124,18 @@ def experimental_data_plotting_func_template(
                 if result_label in tmp_std_data_dict:
                     current_tmp_std_data_dict = add_empty_obj(tmp_std_data_dict, dict, major_key, metabolite_name)
                     current_tmp_std_data_dict[minor_key_str] = (order_index, preprocess_std_data_dict[result_label][metabolite_name])
+                current_mfa_excluded_dict = add_empty_obj(tmp_mfa_excluded_dict, dict, major_key, metabolite_name)
+                current_mfa_excluded_dict[minor_key_str] = (order_index, preprocess_mfa_exclusion_dict[result_label][metabolite_name])
                 current_tmp_color_dict = add_empty_obj(tmp_color_dict, dict, major_key)
                 if minor_key_str not in current_tmp_color_dict:
                     current_tmp_color_dict[minor_key_str] = (order_index, current_color)
         mid_data_dict_for_plotting = convert_tmp_data_to_final_data_dict(tmp_mid_data_dict)
         raw_data_dict_for_plotting = convert_tmp_data_to_final_data_dict(tmp_raw_data_dict)
         std_data_dict_for_plotting = convert_tmp_data_to_final_data_dict(tmp_std_data_dict)
+        mfa_excluded_dict_for_plotting = convert_tmp_data_to_final_data_dict(tmp_mfa_excluded_dict)
         complete_color_dict = {}
         for major_key, each_major_key_tmp_color_dict in tmp_color_dict.items():
             complete_color_dict[major_key] = sort_dict_and_remove_sorting_index(each_major_key_tmp_color_dict)
-
-        # TODO: generate target_emu_name_nested_list for each major key to ensure that all non-exist metabolites
-        # TODO: are labeled by its len, not the metabolite name
 
         (
             tissue_mid_name_list_dict, specific_dimension_metabolite_dict,
@@ -139,15 +143,13 @@ def experimental_data_plotting_func_template(
         # target_row_num = len(target_emu_name_nested_list)
         # target_col_num = len(target_emu_name_nested_list[0])
         for major_key, each_labeling_mid_data_dict_for_plotting in mid_data_dict_for_plotting.items():
-            # formatted_mean_data_dict, formatted_std_data_dict, subplot_name_dict, data_len_dict = mfa_data_dict_preprocess(
-            #     mouse_id_mfa_data_dict, {}, display_mid_name_dict, display_tissue_name_dict,
-            #     specific_dimension_metabolite_dict=specific_dimension_metabolite_dict)
-            # mid_name_list, filtered_mean_data_dict, filtered_std_data_dict = tissue_specific_metabolite_mid_list_constructor(
-            #     formatted_mean_data_dict, formatted_std_data_dict, data_len_dict, tissue_mid_name_list_dict)
-            # title_dict = TransformDict(subplot_name_dict)
-            target_emu_name_nested_list, title_dict, _ = mfa_data_dict_preprocess(
+            each_labeling_mfa_excluded_dict_for_plotting = mfa_excluded_dict_for_plotting[major_key]
+            (
+                target_emu_name_nested_list, title_dict, _, mfa_excluded_text_list, mfa_excluded_text_loc_list
+            ) = mfa_data_dict_preprocess(
                 each_labeling_mid_data_dict_for_plotting, display_mid_name_dict, display_tissue_name_dict, tissue_mid_name_list_dict,
-                specific_dimension_metabolite_dict=specific_dimension_metabolite_dict)
+                each_labeling_mfa_excluded_dict_for_plotting,
+                specific_dimension_metabolite_dict=specific_dimension_metabolite_dict, **figure_param_dict)
             target_row_num = len(target_emu_name_nested_list)
             target_col_num = len(target_emu_name_nested_list[0])
 
@@ -162,10 +164,14 @@ def experimental_data_plotting_func_template(
                     parent_direct = 'raw_data'
                     complete_data_dict = each_labeling_raw_data_dict_for_plotting
                     ylim = (0, None)
+                    supplementary_text_list = None
+                    supplementary_text_loc_list = None
                 else:
                     parent_direct = 'mid_data'
                     complete_data_dict = each_labeling_mid_data_dict_for_plotting
                     ylim = (0, 1)
+                    supplementary_text_list = mfa_excluded_text_list
+                    supplementary_text_loc_list = mfa_excluded_text_loc_list
                 current_title = major_key_file_name_func(major_key)
                 current_cell_line_output_direct = '{}/{}'.format(output_direct, parent_direct)
                 check_and_mkdir_of_direct(current_cell_line_output_direct)
@@ -178,14 +184,16 @@ def experimental_data_plotting_func_template(
                     complete_data_dict=complete_data_dict, target_emu_name_nested_list=target_emu_name_nested_list,
                     target_row_num=target_row_num, target_col_num=target_col_num,
                     error_bar_data_dict=std_data_dict, color_dict=color_dict, y_lim=ylim,
-                    legend_color_dict=current_legend_color_dict, title_dict=title_dict, **figure_param_dict)
+                    legend_color_dict=current_legend_color_dict, title_dict=title_dict,
+                    supplementary_text_list=supplementary_text_list,
+                    supplementary_text_loc_list=supplementary_text_loc_list, **figure_param_dict)
 
     return experimental_data_plotting
 
 
 def mfa_data_dict_preprocess(
         formatted_raw_data_dict, display_mid_name_dict, display_tissue_name_dict, tissue_mid_name_list_dict,
-        specific_dimension_metabolite_dict=None):
+        mfa_excluded_dict, specific_dimension_metabolite_dict=None, mfa_excluded_text_loc=(0.5, 0.5), **kwargs):
     if specific_dimension_metabolite_dict is None:
         specific_dimension_metabolite_dict = {}
     subplot_name_dict = {}
@@ -211,6 +219,8 @@ def mfa_data_dict_preprocess(
             display_tissue_mid_name = f'{display_tissue_name}: {display_mid_name}'
         subplot_name_dict[new_tissue_specific_mid_name] = display_tissue_mid_name
     mid_name_list = []
+    mfa_excluded_text_list = []
+    mfa_excluded_text_loc_list = []
     filtered_raw_data_dict = {}
     for tissue_name, each_tissue_mid_name_list in tissue_mid_name_list_dict.items():
         for mid_name_row in each_tissue_mid_name_list:
@@ -226,12 +236,26 @@ def mfa_data_dict_preprocess(
                     except KeyError:
                         mid_data_len = None
                     new_mid_name_row.append(mid_data_len)
+                    current_mfa_excluded_text = None
                 else:
                     new_mid_name_row.append(new_tissue_specific_mid_name)
+                    if new_tissue_specific_mid_name in mfa_excluded_dict:
+                        this_mid_excluded_dict = mfa_excluded_dict[new_tissue_specific_mid_name]
+                        rm_minor_key_list = [
+                            minor_key for minor_key, excluded in this_mid_excluded_dict.items() if excluded]
+                    else:
+                        rm_minor_key_list = []
+                    if len(rm_minor_key_list) > 0:
+                        current_mfa_excluded_text = f'Excluded from MFA:\n{"\n".join(rm_minor_key_list)}'
+                    else:
+                        current_mfa_excluded_text = None
+                mfa_excluded_text_list.append(current_mfa_excluded_text)
+                mfa_excluded_text_loc_list.append(mfa_excluded_text_loc)
                 filtered_raw_data_dict[new_tissue_specific_mid_name] = this_mid_data_dict
             mid_name_list.append(new_mid_name_row)
     title_dict = TransformDict(subplot_name_dict)
-    return mid_name_list, title_dict, filtered_raw_data_dict
+    return (
+        mid_name_list, title_dict, filtered_raw_data_dict, mfa_excluded_text_list, mfa_excluded_text_loc_list)
 
 
 def mid_name_list_generator_for_multiple_labeling_substrate(raw_metabolite_list, labeling_substrate_name_list):
@@ -456,12 +480,21 @@ def multiple_repeat_result_processing(
         solver_dict, final_solution_data_dict, final_loss_data_dict, final_predicted_mid_data_dict,
         repeat_division_num=1, each_optimization_num=None, loss_percentile=None, select_num=None):
     def index_start_end_generator(total_num, batch_num, optimization_num, start_index=0):
+        if total_num == 0:
+            return
         if optimization_num is not None:
             base_num = optimization_num
             if batch_num is None:
                 batch_num = total_num // base_num
         else:
+            if batch_num is not None and batch_num > total_num:
+                batch_num = total_num
             base_num = total_num // batch_num
+
+        if base_num == 0:
+            return
+
+
         remainder = total_num % base_num
         size_list = [base_num] * batch_num
         current_start_index = start_index

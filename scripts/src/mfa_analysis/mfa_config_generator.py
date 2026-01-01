@@ -37,26 +37,39 @@ class MFASettings(object):
         'GLC_infuse': (ModelKeyword.serum, 100)
     }
 
-    slsqp_solver_config_dict = OptionDict({
-        ParamName.loss_type: ParamName.mean_squared_loss,
-        ParamName.debug: True,
-        ParamName.slsqp_max_iter: 2000,
-    })
+    common_flux_range = (1, 3000)
+    common_mix_ratio_range = (0.05, 0.95)
+    mix_ratio_multiplier = 100
 
-    slsqp_mfa_config = MFAConfig(
-        common_flux_range=(1, 3000), specific_flux_range_dict=None, dynamic_constant_flux_list=[],
-        preset_constant_flux_value_dict=None,
-        common_mix_ratio_range=(0.05, 0.95), mix_ratio_multiplier=100,
-        solver_type=ParamName.slsqp_numba_python_solver,
-        # solver_type=ParamName.slsqp_numba_solver,
-        solver_config_dict=slsqp_solver_config_dict)
+    # Parameters in slsqp_solver_config_dict
+    loss_type = ParamName.mean_squared_loss
+    debug = True
+    slsqp_max_iter = 2000
 
     final_process_parameter_dict = {}
 
     result_label_obj_value_dict = None
 
-    def initialize_running_mode(self, running_mode, **kwargs):
-        if running_mode != MFARunningMode.flux_analysis:
+    initial_slsqp_multiple = 2
+    initial_batch_multiple = 10
+    initial_processes_num = 20
+
+    def __init__(self):
+        self.slsqp_solver_config_dict = OptionDict({
+            ParamName.loss_type: self.loss_type,
+            ParamName.debug: self.debug,
+            ParamName.slsqp_max_iter: self.slsqp_max_iter,
+        })
+        self.default_slsqp_mfa_config = MFAConfig(
+            common_flux_range=self.common_flux_range,
+            specific_flux_range_dict=None, dynamic_constant_flux_list=[],
+            preset_constant_flux_value_dict=None,
+            common_mix_ratio_range=self.common_mix_ratio_range, mix_ratio_multiplier=self.mix_ratio_multiplier,
+            solver_type=self.solver_type,
+            solver_config_dict=self.slsqp_solver_config_dict)
+
+    def initialize_running_mode(self, running_mode, test_mode, **kwargs):
+        if running_mode != MFARunningMode.flux_analysis or test_mode:
             self.tf2_solver = False
 
     @staticmethod
@@ -90,7 +103,6 @@ class MFASettings(object):
         return tf2_slsqp_mfa_config
 
     def specific_flux_range_constant_flux_dict_modifier(self, model_tissue_set, flux_name_index_dict,):
-
         def add_new_component(_flux_dict, _flux_name, _flux_tissue, _flux_range):
             _new_flux_name = tissue_specific_name_constructor(_flux_name, tissue_name_list=_flux_tissue)
             if _new_flux_name in flux_name_index_dict:
@@ -114,7 +126,7 @@ class MFASettings(object):
 
         specific_flux_range_dict = construct_flux_dict(self.user_defined_specific_flux_range_dict)
         constant_flux_dict = construct_flux_dict(self.user_defined_constant_flux_dict)
-        raw_mfa_config = self.slsqp_mfa_config
+        raw_mfa_config = self.default_slsqp_mfa_config
         if isinstance(raw_mfa_config, dict):
             for each_tissue_raw_mfa_config in raw_mfa_config.values():
                 each_tissue_raw_mfa_config.specific_flux_range_dict = dict(specific_flux_range_dict)
@@ -165,14 +177,14 @@ class MFASettings(object):
             'test': (test_batch_size, 2000, test_batch_size, test_batch_size),
             None: (batch_size_32g, 4000, nnls_parallel_num_32g_64g, nnls_parallel_num_32g_64g),
             '0': (batch_size_32g, 4000, nnls_parallel_num_32g_64g, nnls_parallel_num_32g_64g),
-            '1': (batch_size_64g, 5000, nnls_parallel_num_32g_64g, nnls_parallel_num_32g_64g),
+            '1': (batch_size_64g, 4000, nnls_parallel_num_32g_64g, nnls_parallel_num_32g_64g),
             '2': (batch_size_96g, 4000, nnls_parallel_num_96g, nnls_parallel_num_96g),
         }
         return batch_size_32g, parameter_tuple_for_each_suffix_dict
 
     def _construct_tf2_running_settings(
             self, suffix, test_mode, docker_mode, parallel_num):
-        raw_slsqp_mfa_config = self.slsqp_mfa_config
+        raw_slsqp_mfa_config = self.default_slsqp_mfa_config
 
         mp.set_start_method('spawn')
         # if os.name == 'nt':
@@ -190,7 +202,8 @@ class MFASettings(object):
                 batch_size, each_portion_flux_num, nnls_parallel_num, emu_value_parallel_num
             ) = parameter_tuple_for_each_suffix_dict[suffix]
             each_case_target_optimization_num = self.optimization_num_for_each_suffix_dict[suffix]
-        max_optimization_each_generation = int(1.1 * batch_size)
+        max_optimization_each_generation = self.initial_batch_multiple * batch_size
+        initial_processes_num = self.initial_processes_num
         emu_gradient_hessian_parallel_num = 3
 
         if self.result_label_obj_value_dict is not None:
@@ -207,6 +220,7 @@ class MFASettings(object):
         parallel_parameter_dict = {
             ParallelSolverKeywords.max_optimization_each_generation: max_optimization_each_generation,
             ParallelSolverKeywords.batch_solving: batch_size,
+            ParallelSolverKeywords.processes_num: initial_processes_num,
         }
         self.update_final_process_parameter_dict(result_parallel_num=result_parallel_num)
         solver_parameter_dict = self._generate_solver_parameter_dict(
@@ -242,7 +256,8 @@ class MFASettings(object):
             else:
                 assert isinstance(parallel_num, int)
             max_optimization_each_generation = min(
-                each_process_optimization_num * parallel_num, each_case_target_optimization_num) + 1
+                int(each_process_optimization_num * parallel_num * self.initial_slsqp_multiple),
+                each_case_target_optimization_num)
             parallel_parameter_dict = {
                 ParallelSolverKeywords.max_optimization_each_generation: max_optimization_each_generation,
                 ParallelSolverKeywords.each_process_optimization_num: each_process_optimization_num,
@@ -251,7 +266,7 @@ class MFASettings(object):
             }
             print(f'Current experiment: suffix: {suffix}, max initial value: {max_optimization_each_generation}, '
                   f'each process max num: {each_process_optimization_num}, parallel num: {parallel_num}')
-        slsqp_mfa_config = self.slsqp_mfa_config
+        slsqp_mfa_config = self.default_slsqp_mfa_config
         result_parallel_num = 7
         self.update_final_process_parameter_dict(
             result_parallel_num=result_parallel_num, average_optimized_results=None,

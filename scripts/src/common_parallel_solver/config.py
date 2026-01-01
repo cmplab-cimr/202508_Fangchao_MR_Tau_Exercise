@@ -1,5 +1,6 @@
 from .packages import np, gzip, pickle, pathlib
 
+from ..core.common.functions import ProgressBarExtraProcess
 from ..core.solver.solver_construction_functions.solver_constructor import specific_solver_constructor, \
     base_solver_constructor, common_solver_constructor
 from ..core.sampler.np_sampler.sampler_class import OptGpSampler
@@ -91,3 +92,11 @@ def npz_load(raw_path, *args, allow_pickle=False):
 def npz_save(path, **kwargs):
     np.savez_compressed(path, **kwargs)
 
+
+def split_total_num_to_process(total_num, processes_num):
+    common_size = total_num // processes_num
+    rest_size = total_num % processes_num
+    each_process_num_list = (
+            [common_size + 1] * rest_size +
+            [common_size] * (processes_num - rest_size))
+    return each_process_num_list

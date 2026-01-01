@@ -237,6 +237,10 @@ class BasicMIDComparisonGridBarDataFigure(BasicBarDataFigure):
             DataFigureConfig.common_subplot_text_format_dict_generator(scale),
             {},
             figure_data_parameter_dict, ParameterName.subplot_name_text_format_dict, pop=True)
+        supplementary_text_format_dict = merge_axis_format_dict(
+            DataFigureConfig.common_supplementary_text_config_dict,
+            {},
+            figure_data_parameter_dict, ParameterName.supplementary_text_format_dict, pop=True)
         specific_figure_config_dict = default_parameter_extract(
             figure_data_parameter_dict, ParameterName.figure_config_dict, {}, pop=True)
         general_figure_config_dict = {
@@ -249,6 +253,7 @@ class BasicMIDComparisonGridBarDataFigure(BasicBarDataFigure):
             ParameterName.error_bar_param_dict: error_bar_param_dict,
             ParameterName.scatter_param_dict: raw_data_scatter_param_dict,
             ParameterName.subplot_name_text_format_dict: subplot_name_text_format_dict,
+            ParameterName.supplementary_text_format_dict: supplementary_text_format_dict,
         }
         complete_figure_config_dict = merge_complete_config_dict(
             general_figure_config_dict, specific_figure_config_dict)

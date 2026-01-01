@@ -249,7 +249,10 @@ def experimental_and_predicted_mid_materials_generator(
                 current_output_metabolite_name_list.extend((metabolite_name for _ in range(current_vector_len)))
             if append_name_and_mid and current_mid_index_list is not None:
                 current_mid_index_list.extend(range(current_vector_len))
-        if single_vector:
+        if len(mid_vector_list) == 0:
+            _mid_vector_array = np.zeros((0, 0))
+            _vector_num = 0
+        elif single_vector:
             _mid_vector_array = np.concatenate(mid_vector_list).reshape(-1, 1)
             _vector_num = 1
         else:
@@ -332,7 +335,11 @@ def output_predicted_mid_data(
     if other_label_row_dict is None:
         other_label_row_dict = {}
     for result_label, raw_predicted_mid_data_dict in final_predicted_mid_data_dict.items():
-        target_experimental_mid_data_dict = final_target_experimental_mid_data_dict[result_label]
+        complete_target_experimental_mid_data_dict = final_target_experimental_mid_data_dict[result_label]
+        # TODO: This is temporary solution. Need to mark the excluded MFA data.
+        target_experimental_mid_data_dict = {
+            mid_name: complete_target_experimental_mid_data_dict[mid_name]
+            for mid_name in raw_predicted_mid_data_dict.keys()}
         raw_loss_data_array = final_loss_data_dict[result_label]
         if subset_index_dict is not None:
             predicted_mid_data_dict = {}

@@ -1,5 +1,6 @@
 from ..common.config import CoreConstants
-from ..common.packages import np, optimize
+from ..common.packages import np, optimize, mp
+from ..common.functions import split_total_num_to_process, ProgressBarExtraProcess
 
 default_random_min_factor = CoreConstants.lp_random_min_factor
 default_random_max_factor = CoreConstants.lp_random_max_factor
@@ -61,6 +62,17 @@ class BaseSampler(object):
     def sample(self, n=1):
         if not self._set_dynamic_constraint:
             raise ValueError('Dynamic flux value should be set first!')
+
+    def __copy__(self):
+        return BaseSampler(
+            variable_num=self.variable_num, eq_matrix=self.eq_matrix.copy(),
+            eq_right_side_vector=self.eq_right_side_vector.copy(),
+            smaller_eq_matrix=self.smaller_eq_matrix.copy(),
+            smaller_eq_right_side_vector=self.smaller_eq_right_side_vector.copy(),
+            min_value_vector=self.min_value_vector.copy(),
+            max_value_vector=self.max_value_vector.copy(),
+            dynamic_constraint_index_dict=dict(self.dynamic_constraint_index_dict),
+            numeric_eps=self.numeric_eps, verbose=self.verbose)
 
 
 class LPSampler(BaseSampler):
@@ -160,5 +172,144 @@ class LPSampler(BaseSampler):
         else:
             return result_list
 
+    def parallel_sample(self, n, processes_num=6, parallel_test=False, display_progress_bar=False, name=None):
+        return lp_parallel_sample(
+            n, processes_num=processes_num, variable_num=self.variable_num,
+            eq_matrix=self.eq_matrix, eq_right_side_vector=self.eq_right_side_vector,
+            smaller_eq_matrix=self.smaller_eq_matrix, smaller_eq_right_side_vector=self.smaller_eq_right_side_vector,
+            min_value_vector=self.min_value_vector, max_value_vector=self.max_value_vector,
+            random_min_factor=self.random_min_factor, random_max_factor=self.random_max_factor,
+            numeric_eps=self.numeric_eps, parallel_test=parallel_test, display_progress_bar=display_progress_bar,
+            name=name)
 
 
+def lp_single_sample(parameter_list):
+    (
+        total_bounds_obj_num, target_num, all_bounds_array, all_obj_array,
+        eq_matrix, eq_right_side_vector, smaller_eq_matrix, smaller_eq_right_side_vector,
+        numeric_eps, send_pipe) = parameter_list
+    result_list = []
+    for i in range(total_bounds_obj_num):
+        res = optimize.linprog(
+            all_obj_array[i], A_eq=eq_matrix, b_eq=eq_right_side_vector,
+            A_ub=smaller_eq_matrix, b_ub=smaller_eq_right_side_vector,
+            bounds=all_bounds_array[i], method="interior-point",
+            options={'tol': numeric_eps, })  # "disp": self.verbose
+        if res.success:
+            result_list.append(np.array(res.x))
+            if send_pipe is not None:
+                send_pipe.send(1)
+            if len(result_list) == target_num:
+                break
+    return result_list
+
+
+def generate_valid_lb_ub_bounds_and_obj(
+        total_bound_obj_num, variable_num, min_value_vector, max_value_vector, random_min_factor, random_max_factor,
+        random_seed):
+
+    def generate_min_factor_bound():
+        return 1 + random_seed.random([total_bound_obj_num, variable_num]) * random_min_factor
+
+    def generate_max_factor_bound():
+        return random_seed.random([total_bound_obj_num, variable_num]) * random_max_factor + (1 - random_max_factor)
+
+    def clip_to_bound(raw_vector):
+        clipped_vector = np.clip(raw_vector, min_value_vector, max_value_vector)
+        return clipped_vector
+
+    # This may generate wrong solution when self.min_value_vector is smaller than 0
+    raw_lb_generated_by_min_factor = min_value_vector * generate_min_factor_bound()
+    raw_lb_generated_by_max_factor = min_value_vector * generate_max_factor_bound()
+    raw_lb = np.where(min_value_vector >= 0, raw_lb_generated_by_min_factor, raw_lb_generated_by_max_factor)
+    clipped_lb = clip_to_bound(raw_lb)
+    raw_ub = max_value_vector * generate_max_factor_bound()
+    clipped_ub = clip_to_bound(raw_ub)
+    bounds = np.transpose(np.array([clipped_lb, clipped_ub]), axes=(1, 2, 0))
+    obj_array = random_seed.random([total_bound_obj_num, variable_num]) - 0.4
+    return bounds, obj_array
+
+
+def lp_parallel_sample(
+        target_size, processes_num, variable_num,
+        eq_matrix, eq_right_side_vector, smaller_eq_matrix, smaller_eq_right_side_vector,
+
+        min_value_vector, max_value_vector, random_min_factor, random_max_factor, numeric_eps, parallel_test,
+        display_progress_bar=False, name=None):
+
+    def parameter_list_generator(current_processes_num, send_pipe):
+        for i in range(current_processes_num):
+            this_process_target_size = each_process_size_list[i]
+            bound_obj_start = i * each_process_valid_bound_num
+            bound_obj_end = (i + 1) * each_process_valid_bound_num
+            current_bound_array = bounds[bound_obj_start:bound_obj_end]
+            current_obj_array = obj_array[bound_obj_start:bound_obj_end]
+            yield (
+                each_process_valid_bound_num, this_process_target_size, current_bound_array, current_obj_array,
+                eq_matrix, eq_right_side_vector, smaller_eq_matrix, smaller_eq_right_side_vector,
+                numeric_eps, send_pipe)
+
+    def process_result(current_raw_result):
+        folded_initial_vector_list.append(current_raw_result)
+        return len(current_raw_result)
+
+    # random_seed = np.random.default_rng(4536251)
+    random_seed = np.random.default_rng()
+
+    folded_initial_vector_list = []
+    current_target_size = target_size
+    each_process_minimal_num = 10
+    max_iter_num = 100
+    iter_count = 0
+
+    if name is not None:
+        display_title = f'Initial solution generation for {name}'
+    else:
+        display_title = 'Initial solution generation'
+
+    with ProgressBarExtraProcess(
+        display_progress_bar=display_progress_bar, target_size=target_size, display_title=display_title
+    ) as progress_bar:
+
+        # print(f'Computation started')
+        while current_target_size > 0 and iter_count < max_iter_num:
+            if current_target_size <= each_process_minimal_num:
+                parallel_test = True
+                current_processes_num = 1
+            elif current_target_size <= each_process_minimal_num * processes_num:
+                current_processes_num = current_target_size // each_process_minimal_num
+            else:
+                current_processes_num = processes_num
+
+            each_process_size_list = split_total_num_to_process(current_target_size, current_processes_num)
+            finished_num = 0
+            each_process_valid_bound_num = each_process_size_list[0] * 2
+            valid_bound_num = each_process_valid_bound_num * current_processes_num
+            bounds, obj_array = generate_valid_lb_ub_bounds_and_obj(
+                valid_bound_num, variable_num, min_value_vector, max_value_vector, random_min_factor, random_max_factor,
+                random_seed)
+            parameter_list_iter = parameter_list_generator(current_processes_num, progress_bar.send_pipe)
+
+            # print(f'Computation in cycle {iter_count} started')
+            if parallel_test:
+                for parameter_list in parameter_list_iter:
+                    raw_result = lp_single_sample(parameter_list)
+                    finished_num += process_result(raw_result)
+            else:
+                with mp.Pool(processes=current_processes_num) as pool:
+                    raw_result_iter = pool.imap(lp_single_sample, parameter_list_iter)
+                    for raw_result in raw_result_iter:
+                        finished_num += process_result(raw_result)
+
+            current_target_size -= finished_num
+            iter_count += 1
+            # print(f'Cycle {iter_count} finished')
+
+    # print(f'Sample finished')
+    # exit(0)
+
+    if current_target_size > 0:
+        return None
+    else:
+        final_initial_array = np.concatenate(folded_initial_vector_list)[:target_size]
+        return final_initial_array
